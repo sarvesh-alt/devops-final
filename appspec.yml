@@ -1,0 +1,26 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: "more-ecs-task"  # Update with your task definition name as needed
+        LoadBalancerInfo:
+          ContainerName: "more-ecs-container"
+          ContainerPort: 5000
+      Hooks:
+        BeforeInstall:
+          - location: scripts/before_install.sh
+            timeout: 300
+            runas: root
+        AfterInstall:
+          - location: scripts/after_install.sh
+            timeout: 300
+            runas: root
+        ApplicationStart:
+          - location: scripts/application_start.sh
+            timeout: 300
+            runas: root
+        ValidateService:
+          - location: scripts/validate_service.sh
+            timeout: 300
+            runas: root
