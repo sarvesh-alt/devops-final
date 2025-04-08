@@ -1,36 +1,45 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Deploy a Flask app on ECS Fargate with an ALB, custom VPC, and a complete CI/CD pipeline.
-  This template creates networking (VPC, Subnets, IGW, NAT), ECS resources (cluster, task, service),
-  an Application Load Balancer, and CI/CD resources (CodeBuild, CodeDeploy, CodePipeline).
-  It also defines CloudWatch alarms to catch failures in CodeBuild and CodePipeline.
+  The pipeline uses CodeBuild, CodeDeploy, and CodePipeline along with CloudWatch alarms.
+  All resources are prefixed with "more-". This template is configured for the ca-central-1 region.
 
 Parameters:
   VpcCIDR:
     Description: CIDR block for VPC
     Type: String
     Default: 10.0.0.0/16
+
   S3ArtifactBucket:
     Description: The S3 bucket used to store CodePipeline artifacts.
     Type: String
-    Default: my-cicd-artifacts-bucket
+    Default: my-cicd-artifacts-bucket-more  # Replace with your actual bucket name
+
   GitHubOwner:
     Description: Your GitHub username or organization.
     Type: String
+    Default: sarvesh-alt
+
   GitHubRepo:
     Description: The GitHub repository name.
     Type: String
+    Default: devops-final
+
   GitBranch:
     Description: The branch in the GitHub repository to deploy.
     Type: String
-    Default: master
+    Default: main  # Adjust if your default branch is "master"
+
   GitHubOAuthToken:
     Description: GitHub OAuth token with access to the repository.
     Type: String
     NoEcho: true
+    Default: INSERT_GITHUB_OAUTH_TOKEN_HERE  # Replace with your GitHub token
+
   SNSTopicARN:
     Description: ARN of the SNS topic to notify on alarm triggers.
     Type: String
+    Default: arn:aws:sns:ca-central-1:123456789012:MyAlerts  # Replace with your actual SNS ARN
 
 Resources:
   #########################################
@@ -269,7 +278,7 @@ Resources:
   MoreECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: devops-final-task
+      Family: more-flask-app-task
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
@@ -278,8 +287,8 @@ Resources:
       ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
       ContainerDefinitions:
         - Name: flask-app
-          # Replace the image URI below with your ECR repository URI if dynamically built.
-          Image: "615299769322.dkr.ecr.ca-central-1.amazonaws.com/devops-final:latest"
+          # Update the image URI below to reflect your ECR image in ca-central-1.
+          Image: "615299769322.dkr.ecr.ca-central-1.amazonaws.com/more-flask-app:latest"
           PortMappings:
             - ContainerPort: 5000
           Essential: true
@@ -288,7 +297,7 @@ Resources:
     Type: AWS::ECS::Service
     DependsOn: MoreListener
     Properties:
-      ServiceName: devops-final-service
+      ServiceName: more-flask-app-service
       Cluster: !Ref MoreECSCluster
       TaskDefinition: !Ref MoreECSTaskDefinition
       LaunchType: FARGATE
@@ -309,7 +318,6 @@ Resources:
   #########################################
   ## CI/CD Resources: IAM Roles, CodeBuild, CodeDeploy & CodePipeline
   #########################################
-  ## IAM Role for CodeBuild
   MoreCodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -350,7 +358,6 @@ Resources:
                   - s3:PutObject
                 Resource: !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
 
-  ## IAM Role for CodeDeploy
   MoreCodeDeployRole:
     Type: AWS::IAM::Role
     Properties:
@@ -377,7 +384,6 @@ Resources:
                   - lambda:InvokeFunction
                 Resource: "*"
 
-  ## IAM Role for CodePipeline
   MoreCodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -412,7 +418,6 @@ Resources:
                   - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
                   - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
 
-  ## CodeBuild Project
   MoreCodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -429,14 +434,12 @@ Resources:
         Type: CODEPIPELINE
       TimeoutInMinutes: 30
 
-  ## CodeDeploy Application
   MoreCodeDeployApplication:
     Type: AWS::CodeDeploy::Application
     Properties:
       ApplicationName: more-codedeploy-application
       ComputePlatform: ECS
 
-  ## CodeDeploy Deployment Group
   MoreCodeDeployDeploymentGroup:
     Type: AWS::CodeDeploy::DeploymentGroup
     Properties:
@@ -450,114 +453,4 @@ Resources:
         TerminateBlueInstancesOnDeploymentSuccess:
           Action: TERMINATE
           TerminationWaitTimeInMinutes: 5
-        DeploymentReadyOption:
-          ActionOnTimeout: CONTINUE_DEPLOYMENT
-          WaitTimeInMinutes: 0
-        GreenFleetProvisioningOption:
-          Action: DISCOVER_EXISTING
-      ECSServices:
-        - ClusterName: !Ref MoreECSCluster
-          ServiceName: !Ref MoreECSService
-
-  ## CodePipeline
-  MoreCodePipeline:
-    Type: AWS::CodePipeline::Pipeline
-    Properties:
-      Name: more-codepipeline
-      RoleArn: !GetAtt MoreCodePipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref S3ArtifactBucket
-      Stages:
-        - Name: Source
-          Actions:
-            - Name: SourceAction
-              ActionTypeId:
-                Category: Source
-                Owner: ThirdParty
-                Provider: GitHub
-                Version: "1"
-              OutputArtifacts:
-                - Name: SourceArtifact
-              Configuration:
-                Owner: !Ref GitHubOwner
-                Repo: !Ref GitHubRepo
-                Branch: !Ref GitBranch
-                OAuthToken: !Ref GitHubOAuthToken
-              RunOrder: 1
-        - Name: Build
-          Actions:
-            - Name: BuildAction
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: "1"
-              InputArtifacts:
-                - Name: SourceArtifact
-              OutputArtifacts:
-                - Name: BuildArtifact
-              Configuration:
-                ProjectName: !Ref MoreCodeBuildProject
-              RunOrder: 1
-        - Name: Deploy
-          Actions:
-            - Name: DeployAction
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CodeDeploy
-                Version: "1"
-              InputArtifacts:
-                - Name: BuildArtifact
-              Configuration:
-                ApplicationName: !Ref MoreCodeDeployApplication
-                DeploymentGroupName: !Ref MoreCodeDeployDeploymentGroup
-              RunOrder: 1
-
-  #########################################
-  ## CloudWatch Alarms for CI/CD monitoring
-  #########################################
-  MorePipelineAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: more-codepipeline-failure-alarm
-      AlarmDescription: Alarm for CodePipeline failures
-      MetricName: PipelineExecutionFailed
-      Namespace: AWS/CodePipeline
-      Statistic: Maximum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      Dimensions:
-        - Name: PipelineName
-          Value: !Ref MoreCodePipeline
-      AlarmActions:
-        - !Ref SNSTopicARN
-
-  MoreBuildAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: more-codebuild-failure-alarm
-      AlarmDescription: Alarm for CodeBuild failures
-      MetricName: FailedBuilds
-      Namespace: AWS/CodeBuild
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      Dimensions:
-        - Name: ProjectName
-          Value: !Ref MoreCodeBuildProject
-      AlarmActions:
-        - !Ref SNSTopicARN
-
-Outputs:
-  LoadBalancerDNS:
-    Description: "The DNS name of the ALB"
-    Value: !GetAtt MoreLoadBalancer.DNSName
-  CodePipelineName:
-    Description: "The name of the created CodePipeline"
-    Value: !Ref MoreCodePipeline
+        DeploymentReadyOption
